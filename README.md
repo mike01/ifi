@@ -1,6 +1,11 @@
 ### General information
 This is IFi the interactive firewall. The main purpose is to build
 a firewal profile based on user decision while network is active.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/mike01/ifi/master/screenshot.png" alt="ifi"/>
+</p>
+
 This comes in handy when hardening a system via firewall rules
 but the actual needed/allowed addresses and ports are unknown.
 
