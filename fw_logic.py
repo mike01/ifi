@@ -144,13 +144,15 @@ class Firewall(object):
 		return -- True if connection gets accepted, else False
 		"""
 		# self._inputlock.lock()
+		sport, dport = None, None
 		sport_str, dport_str = "", ""
 
 		if pkt.upper_layer.__class__ in [tcp.TCP, udp.UDP]:
-			sport_str, dport_str = ":%d" % pkt.upper_layer.sport, ":%d" % pkt.upper_layer.sport
+			sport, dport = pkt.upper_layer.sport, pkt.upper_layer.dport
+			sport_str, dport_str = ":%d" % sport, ":%d" % dport
 
 		# logger.debug("trying to get process info")
-		cmd = get_procinfo_by_address(pkt.src_s, pkt.dst_s, port_src=sport_str, port_dst=dport_str)
+		cmd = get_procinfo_by_address(pkt.src_s, pkt.dst_s, port_src=sport, port_dst=dport)
 
 		procinfo_question = ""
 		procinfo = ""
