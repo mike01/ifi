@@ -178,13 +178,12 @@ class Firewall(object):
 				return False
 
 			procinfo_question = ", [a]ll conn. from this process, [n]o conn. from this process"
-			procinfo = "Process: '%s'(PID: % d, User: % s)" % (cmd[1], cmd[0], cmd[2])
+			procinfo = "Process: '%s'\n(PID: % d, User: % s)\ng" % (cmd[1], cmd[0], cmd[2])
 
 		# TODO: show if IN or OUT direction
 		pstack = " + ".join([l.__class__.__name__ for l in pkt])
 		msg = """Allow this connection? [w]hitelist [b]lacklist, [i]gnore %s (empty = ignore)
-%s
-Connection: %s%s %s -> %s%s %s
+%sConnection: %s%s %s -> %s%s %s
 Protocol stack: %s
 Answer: """ % (
 			procinfo_question,

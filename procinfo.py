@@ -49,11 +49,12 @@ def get_procinfo_by_address(ip_src, ip_dst, port_src=None, port_dst=None):
 			if len(c.raddr) != 0 and c.pid is not None and (c.laddr[0], c.raddr[0]) == (ip_src, ip_dst)]
 
 	try:
-		if len(pids[0]) > 0:
-			logger.warning("more than 1 process: %r", pids)
+		if len(pids) > 1:
+			logger.warning("more than 1 matching process: %r", pids)
 		proc = Process(pids[0])
 		cmd = [pids[0], proc.cmdline(), proc.username()]
-		procinfo_hash = hashlib.sha256("%d%s%s" % (cmd[0], cmd[1], cmd[2]))
+		hash_input = "%d%s%s" % (cmd[0], cmd[1], cmd[2])
+		procinfo_hash = hashlib.sha256(hash_input.encode("UTF-8"))
 		cmd.append(procinfo_hash)
 		logger.debug("process info: %r", cmd)
 		return cmd

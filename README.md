@@ -17,6 +17,8 @@ a reasonable performance. Nevertheless IFi gives a hint
 which process is initiating an outgoing connection to allow an
 educated white/blacklisting of connections.
 
+Note: Packets with UDP target or source port 53 are always allowed outgoing/incoming.
+These two rules would have to be added manually if applied on a different machine.
 ### Prerequisites
 - Un*x based operating system
 - python 3.x
