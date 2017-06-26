@@ -31,7 +31,7 @@ These two rules would have to be added manually if applied on a different machin
 Just download/unpack
 
 ### Usage
-# Start in learning mode: black/whitelist addresses, stop via Ctrl+C. Customize fw_rules_xxx files and restart if needed.
-python ifi.py -l True
-# Start firewall in active mode
-python ifi.py
+- Start in learning mode: black/whitelist addresses, stop via Ctrl+C. Customize fw_rules_xxx files and restart if needed.
+´python ifi.py -l True´
+- Start firewall in active mode
+´python ifi.py´
