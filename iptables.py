@@ -51,7 +51,8 @@ class IPTablesHandler(object):
 			return
 
 		self._state_active = state_active
-		rules = IPTablesHandler.IPTABLES_RULES_ACTIVE if state_active else IPTablesHandler.IPTABLES_RULES_INACTIVE
+		rules = IPTablesHandler.IPTABLES_RULES_ACTIVE if state_active else\
+			IPTablesHandler.IPTABLES_RULES_INACTIVE
 
 		for rule in rules:
 			output = subprocess.getoutput(rule)

@@ -36,8 +36,9 @@ from pypacker import pypacker, ppcap, interceptor
 from iptables import IPTablesHandler
 from procinfo import get_procinfo_by_address
 
-unpack_I = struct.Struct(">I").unpack
 pack_B = struct.Struct("B").pack
+pack_H = struct.Struct("H").pack
+unpack_I = struct.Struct(">I").unpack
 PATTERN_IP = re.compile("\d+\.\d+\.\d+\.\d+")
 
 logger = logging.getLogger("ifi")
@@ -50,7 +51,10 @@ class recdefaultdict(defaultdict):
 	def __init__(self, dict_init=None):
 		super().__init__(recdefaultdict)
 		#TypeError: descriptor 'keys' of 'dict' object needs an argument
-		logger.debug("init using dict_init: %r type: %r", dict_init, type(dict_init))
+		logger.debug("init using dict_init: %r type: %r",
+			dict_init,
+			type(dict_init)
+		)
 		if dict_init is not None:
 			self.update(dict_init)
 
@@ -70,23 +74,9 @@ def _dict_representer(dumper, data):
 
 
 class Firewall(object):
-	"""
-	OUT:
-		src:dst -> allow established/related
-		dst -> allow known
-	IN:
-		src:dst -> allow established/related
-		dst -> check known
-	"""
-	DECISION_CB = {
-		ip.IP_PROTO_TCP: lambda pkt, ainfo: pkt.dport in ainfo,
-		ip.IP_PROTO_UDP: lambda pkt, ainfo: pkt.dport in ainfo
-	}
-
-	DECISION_CB_DFLT = lambda pkt, ainfo: True
 	EXRACT_CB_OUT = {
-		ip.IP_PROTO_TCP: lambda pkt: pkt.dport,
-		ip.IP_PROTO_UDP: lambda pkt: pkt.dport,
+		ip.IP_PROTO_TCP: lambda pkt: " %d" % pkt.dport,
+		ip.IP_PROTO_UDP: lambda pkt: " %d" % pkt.dport
 	}
 
 	def __init__(self, learningmode=True):
@@ -94,13 +84,11 @@ class Firewall(object):
 		self._ictor_out = interceptor.Interceptor()
 		self._ictor_in = interceptor.Interceptor()
 		self._state_active = False
-		# {b"ip" : {"proto" : {data, ...}, ...}}
-		# data needs to be non-empty or rules will be ignored
-		# TODO: avoid saving non-empty rules (autodict-behaviour)
-		self._rules_ip_proto_wl_out = defaultdict(lambda: defaultdict(set))
-		self._rules_ip_proto_bl_out = defaultdict(lambda: defaultdict(set))
-		self._rules_ip_proto_wl_in = defaultdict(lambda: defaultdict(set))
-		self._rules_ip_proto_bl_in = defaultdict(lambda: defaultdict(set))
+		# Rule format: b"1234A" b"1234ABB"
+		self._rules_ip_proto_wl_out = set()
+		self._rules_ip_proto_bl_out = set()
+		self._rules_ip_proto_wl_in = set()
+		self._rules_ip_proto_bl_in = set()
 		# hashes of known apps, stored non volatile (PID is dynamic)
 		self._app_wl = set()
 		self._app_bl = set()
@@ -123,27 +111,18 @@ class Firewall(object):
 		Firewall._save_rules(self._rulefile_wl_in, self._rules_ip_proto_wl_in)
 		Firewall._save_rules(self._rulefile_bl_in, self._rules_ip_proto_bl_in)
 
-	def _add_rule(self, ipl, dnsname, target):
-		proto = ipl.p
+	@staticmethod
+	def _create_rule_entry(ipl):
+		proto_id = ipl.p
 		# extract layer 4 data (ports etc)
-		ldata = Firewall.EXRACT_CB_OUT.get(
-			proto, lambda pkt: "<data>")(ipl.upper_layer)
-
-		if dnsname is not None and len(dnsname) > 0:
-			# logger.debug("adding rule for DNS %r", dnsname)
-			target[dnsname][proto].add(ldata)
-			target[ipl.dst][proto].add(ldata)
-			target[ipl.dst]["RESOLVED"] = True
-		else:
-			# error while resolving DNS, just add IP address
-			target[ipl.dst][proto].add(ldata)
+		ldata = Firewall.EXRACT_CB_OUT.get(proto_id, lambda pkt: "")(ipl.upper_layer)
+		return ipl.dst_s + " %d" % proto_id + ldata
 
 	def _user_decision(self, pkt, rules_wl, rules_bl):
 		"""
 		Get user decision about connection acceptance
 		return -- True if connection gets accepted, else False
 		"""
-		# self._inputlock.lock()
 		sport, dport = None, None
 		sport_str, dport_str = "", ""
 
@@ -161,7 +140,6 @@ class Firewall(object):
 		for idx, addr in enumerate([pkt.src_s, pkt.dst_s]):
 			try:
 				#logger.debug("getting host for %r", addr)
-				# TODO: set (lower) timeout, this can take many seconds...
 				dns_src_dst[idx] = socket.gethostbyaddr(addr)[0]
 			except:
 				# dns resolve error
@@ -171,10 +149,10 @@ class Firewall(object):
 		if len(cmd) == 4:
 			# check if app is known
 			if cmd[3] in self._app_wl:
-				self._add_rule(ip1, dns_src_dst[1], rules_wl)
+				rules_wl.add(Firewall._create_rule_entry(pkt))
 				return True
 			elif cmd[3] in self._app_bl:
-				self._add_rule(ip1, dns_src_dst[1], rules_bl)
+				rules_bl.add(Firewall._create_rule_entry(pkt))
 				return False
 
 			procinfo_question = ", [a]ll conn. from this process, [n]o conn. from this process"
@@ -182,7 +160,7 @@ class Firewall(object):
 
 		# TODO: show if IN or OUT direction
 		pstack = " + ".join([l.__class__.__name__ for l in pkt])
-		msg = """Allow this connection? [w]hitelist [b]lacklist, [i]gnore %s (empty = ignore)
+		msg = """Allow this connection? [w]hitelist [b]lacklist, [i]gnore%s (empty = ignore)
 %sConnection: %s%s %s -> %s%s %s
 Protocol stack: %s
 Answer: """ % (
@@ -198,10 +176,10 @@ Answer: """ % (
 		accept = False
 
 		if decision_str.startswith("w"):
-			self._add_rule(pkt, dns_src_dst[1], rules_wl)
+			rules_wl.add(Firewall._create_rule_entry(pkt))
 			accept = True
 		elif decision_str.startswith("b"):
-			self._add_rule(pkt, dns_src_dst[1], rules_bl)
+			rules_bl.add(Firewall._create_rule_entry(pkt))
 
 		if len(cmd) == 4:
 			if decision_str.startswith("a"):
@@ -211,16 +189,6 @@ Answer: """ % (
 				self._app_bl.add(cmd[3])
 
 		return accept
-
-	def _add_dns_to_wl(self, dns_ip_str):
-		"""
-		Add DNS server to whitelist
-
-		"""
-		logger.debug("adding DNS server to wl: %r", dns_ip_str)
-		dns_ip_bytes = pypacker.ip4_str_to_bytes(dns_ip_str)
-		# assume UDP target port 53
-		self._rules_ip_proto_wl_out[dns_ip_bytes][ip.IP_PROTO_UDP].add(53)
 
 	# assume IPv4 or IPv6
 	LL_PROTO_CB = {
@@ -233,132 +201,75 @@ Answer: """ % (
 		ipl = Firewall.LL_PROTO_CB[ll_proto_id](data)
 		# logger.debug("verdict_cb, packet: %r", ipl)
 		decision_accept = False
-		ainfo = ctx.rules_wl[ipl.dst][ipl.p]
 
-		# TODO: this makes trouble if proto id does not match protocol
-		if len(ainfo) != 0:
-			decision_accept = Firewall.DECISION_CB.get(
-				ipl.p, Firewall.DECISION_CB_DFLT)(ipl.upper_layer, ainfo)
+		rule = Firewall._create_rule_entry(ipl)
+
+		if rule in ctx.rules_wl:
+			decision_accept = True
+		elif rule in ctx.rules_bl:
+			pass
 		else:
-			logger.debug("no wl rule found, trying bl")
-			ainfo = ctx.rules_bl[ipl.dst][ipl.p]
+			logger.debug("no wl or bl rule found, asking user")
 
-			if len(ainfo) != 0:
-				decision_accept = Firewall.DECISION_CB.get(
-					ipl.p, Firewall.DECISION_CB_DFLT)(ipl.upper_layer, ainfo)
+			# no bl rule found -> ask user
+			if ctx.obj._learningmode:
+				ctx.obj._inputlock.acquire()
+				decision_accept = ctx.obj._user_decision(
+					ipl,
+					ctx.rules_wl,
+					ctx.rules_bl
+				)
+				ctx.obj._inputlock.release()
+				logger.debug("got user input, accept packet: %r", decision_accept)
 			else:
-				logger.debug("no bl rule found")
-
-				# no bl rule found -> ask user
-				if ctx.obj._learningmode:
-					ctx.obj._inputlock.acquire()
-					decision_accept = ctx.obj._user_decision(
-						ipl,
-						ctx.rules_wl,
-						ctx.rules_bl
-					)
-					ctx.obj._inputlock.release()
-					logger.debug("got user input, accept packet: %r", decision_accept)
-				else:
-					# no rule and not asking user -> drop
-					decision_accept = False
+				# no rule and not asking user -> drop
+				decision_accept = False
 
 		if decision_accept:
-			logger.debug("accepting packet: %s -> %s",
-				ipl.src_s, ipl.dst_s)
+			logger.debug("accepting packet: %s -> %s", ipl.src_s, ipl.dst_s)
 			return data, interceptor.NF_ACCEPT
 		else:
-			logger.debug("NOT accepting packet: %s -> %s",
-				ipl.src_s, ipl.dst_s)
+			logger.debug("NOT accepting packet: %s -> %s", ipl.src_s, ipl.dst_s)
 			return data, interceptor.NF_DROP
 
 	@staticmethod
-	def _save_rules(filename_rules, target_dct):
+	def _save_rules(filename_rules, rules):
 		"""
 		Saves firewall rules to file.
 		"""
 		# logger.debug("saving rules to: %r", filename_rules)
-		filtered_rules = {}
-
-		# only store non-resolved addresses
-		for ip_dns, proto in target_dct.items():
-			# don't store resolved addresses
-			if "RESOLVED" in target_dct[ip_dns]:
-				# TODO: check for correct rule saving
-				continue
-
-			# b"ip" -> "1.2.3.4"
-			if type(ip_dns) is bytes:
-				ip_dns = pypacker.ip4_bytes_to_str(ip_dns)
-
-			filtered_rules[ip_dns] = proto
-
-		# logger.debug("saving rules: %r", filtered_rules)
-
 		with open(filename_rules, "w") as fd_out:
-			yaml.dump(filtered_rules, fd_out)
+			for rule in rules:
+				rule = rule.strip()
+
+				if len(rule) == 0:
+					continue
+				fd_out.write(rule + "\n")
 
 	@staticmethod
-	def _load_rules(filename_rules, target_dct):
+	def _load_rules(filename_rules, rules):
 		"""
 		Loads Firewall rules from file.
 		"""
-		# logger.debug("loading rules from: %r", filename_rules)
-		# {"ip|dns" : { "upper_proto" : {data, ...}}}
+		logger.debug("loading rules from: %r", filename_rules)
+		rules.clear()
+
 		try:
 			with open(filename_rules, "r") as fd_in:
-				config_rules = yaml.load(fd_in)
+				for line in fd_in:
+					line = line.strip()
+
+					if len(line) == 0:
+						continue
+					rules.add(line)
 		except FileNotFoundError:
 			# no rules saved yet, nothing to load
 			return
 
-		Firewall._update_dynamic_addresses(config_rules)
-		target_dct.clear()
-
-		# "1.2.3.4" -> b"ip"
-		for ip_dns, proto in config_rules.items():
-			if PATTERN_IP.match(ip_dns):
-				ip_dns = pypacker.ip4_str_to_bytes(ip_dns)
-			target_dct[ip_dns] = proto
-
 		logger.debug("loaded rules:")
 
-		for key, val in target_dct.items():
-			logger.debug("%r -> %r", key, val)
-
-	@staticmethod
-	def _update_dynamic_addresses(target):
-		"""
-		Resolve DNS names to IP addresses
-		"""
-		# logger.debug("resolving DNS names")
-		# remove old dynamic resolved addresses
-		for addr in target.keys():
-			if "RESOLVED" in target[addr]:
-				del target[addr]
-
-		# update dictionary when iterating -> copy keys
-		for ip_dns in [key for key in target.keys()]:
-			proto = target[ip_dns]
-			# logger.debug("converting: %r %r", ip_dns, proto)
-
-			if PATTERN_IP.match(ip_dns):
-				continue
-			try:
-				# logger.debug("resolving: %r", ip_dns)
-				ips = socket.gethostbyname_ex(ip_dns)[-1]
-			except Exception:
-				logger.debug("could not resolve: %r", ip_dns)
-				continue
-
-			for ip_resolved in ips:
-				# don't overwrite non resolved addresses
-				if ip_resolved in target:
-					continue
-				# avoid updating original
-				target[ip_resolved] = copy.deepcopy(proto)
-				target[ip_resolved]["RESOLVED"] = True
-		# logger.debug("after resolving: %r", target)
+		for rule in rules:
+			logger.debug(rule)
 
 	def set_state(self, state_active=True):
 		if self._state_active == state_active:
@@ -389,52 +300,9 @@ Answer: """ % (
 			)
 		else:
 			logger.debug("stopping interceptor handlers")
-			# logger.debug("self._ictor_out.stop()")
 			self._ictor_out.stop()
-			# logger.debug("self._ictor_in.stop()")
 			self._ictor_in.stop()
 			logger.debug("removing iptables rules")
 			self._ipt_handler.set_nfqueue_config(state_active=False)
 			logger.debug("saving firewall fules")
 			self._save_all_rules()
-
-	def store_wl_rules_readable(self, filename="fw_rules_readable.txt"):
-		"""
-		Stores the whitelist rules in readable format. Can be used
-		to create iptables rules with default DROP policy.
-
-		filename -- Name of the file to store wl rules to
-		"""
-		self._load_all_rules()
-		fd_out = open(filename, "w")
-		type_str_dct = {
-			ip.IP_PROTO_TCP: "TCP",
-			ip.IP_PROTO_UDP: "UDP",
-			ip.IP_PROTO_ICMP: "ICMP"
-		}
-
-		for ruletype, rules in zip(["Whitelist OUT", "Whitelist IN"],
-			[self._rules_ip_proto_wl_out, self._rules_ip_proto_wl_in]):
-			fd_out.write(">>> %r\n" % ruletype)
-
-			for ip_dns, protoid_data in rules.items():
-				# don't store DNS names
-				if type(ip_dns) is not bytes:
-					continue
-
-				fd_out.write("%s" % pypacker.ip4_bytes_to_str(ip_dns))
-
-				for protoid, data in protoid_data.items():
-					# store both resolved and non resolved IPs
-					if type(protoid) is not int:
-						continue
-
-					#logger.debug("%r -> %r", protoid, data)
-					protoid_str = type_str_dct.get(protoid, "%r" % protoid)
-					fd_out.write(" (proto: %s" % protoid_str)
-
-					for dataitem in data:
-						if protoid in [ip.IP_PROTO_TCP, ip.IP_PROTO_UDP]:
-							fd_out.write(", port %r" % dataitem)
-					fd_out.write(")\n")
-		fd_out.close()

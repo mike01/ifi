@@ -54,8 +54,8 @@ if uid != 0:
 	logger.warning("you need to be root to use this program")
 
 if __name__ == "__main__":
-	#VERBOSITY_DEFAULT = 1
 	VERBOSITY_DEFAULT = 1
+	#VERBOSITY_DEFAULT = 2
 	verbosity_val = {
 		0: logging.WARNING,
 		1: logging.INFO,
@@ -73,25 +73,17 @@ if __name__ == "__main__":
 						help="Learn allowed connections based on user decision",
 						required=False,
 						default=False)
-	parser.add_argument("-c", "--convert", type=bool,
-						help="Convert stored rules to readable format",
-						required=False,
-						default=False)
 
 	args = parser.parse_args()
 	logger.setLevel(verbosity_val.get(args.verbosity, VERBOSITY_DEFAULT))
-	logger.debug("learning mode active: %r", args.learninmode)
 
 	fw = Firewall(learningmode=args.learninmode)
-
-	if args.convert:
-		fw.store_wl_rules_readable()
-
-	logger.info("Starting firewall")
+	logger.info("Starting firewall, stop via Ctrl+C")
+	logger.debug("Learning mode active: %r", args.learninmode)
 	fw.set_state(state_active=True)
 
 	try:
-		time.sleep(999)
+		time.sleep(60 * 60 * 24 * 365)
 	except KeyboardInterrupt:
 		logger.info("user intterupt, stopping...")
 	fw.set_state(state_active=False)
