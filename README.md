@@ -1,6 +1,8 @@
 ### General information
 This is IFi the interactive firewall. The main purpose is to build
 a firewall profile based on user decision while network is active.
+All rules are stored to human readable files (fw_rules_xxx.txt) for
+inspection/customizing.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/mike01/ifi/master/screenshot.png" alt="ifi"/>
