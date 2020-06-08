@@ -1,3 +1,6 @@
+# <span style="color:red">Please note: This respository has become staled due to relocation to GitLab. Visit https://gitlab.com/mike01/ for up-to-date versions.</span>
+
+
 ### General information
 This is IFi the interactive firewall. The main purpose is to build
 a firewall profile based on user decision while network is active.
